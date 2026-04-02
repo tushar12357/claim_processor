@@ -3,25 +3,38 @@ import easyocr
 import numpy as np
 from PIL import Image
 import io
+from concurrent.futures import ThreadPoolExecutor
 
+# Initialize ONCE (important)
 reader = easyocr.Reader(['en'], gpu=False)
 
-def load_pdf(file_bytes):
-    doc = fitz.open(stream=file_bytes, filetype="pdf")
-    pages = []
 
-    for page in doc:
-        pix = page.get_pixmap()
+def process_page(page):
+    try:
+        # 1. Try normal text extraction first (FAST)
+        text = page.get_text()
+        if text.strip():
+            return text
+
+        # 2. Fallback to OCR (only if needed)
+        pix = page.get_pixmap(matrix=fitz.Matrix(1, 1))  # low resolution (FAST)
         img_bytes = pix.tobytes("png")
         image = Image.open(io.BytesIO(img_bytes))
 
-        # convert to numpy array
         img_np = np.array(image)
 
-        # OCR
-        results = reader.readtext(img_np, detail=0)
+        results = reader.readtext(img_np, detail=0, paragraph=True)
+        return " ".join(results)
 
-        text = "\n".join(results)
-        pages.append(text)
+    except Exception as e:
+        return ""
+
+
+def load_pdf(file_bytes):
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+
+    # 🔥 Parallel processing (FAST)
+    with ThreadPoolExecutor() as executor:
+        pages = list(executor.map(process_page, doc))
 
     return pages
